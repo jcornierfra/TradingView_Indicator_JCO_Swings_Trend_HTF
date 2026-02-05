@@ -2,11 +2,13 @@
 
 Pine Script indicator for TradingView that detects swing highs and lows on a higher timeframe (HTF) and determines the trend direction based on swing structure.
 
+![JCO Swings Trend HTF Screenshot](screenshot.png)
+
 ## Features
 
 - **Trend Detection**: Identifies Bullish/Bearish trends with Momentum or Compression status
 - **CHoCH Detection**: Change of Character detection for potential trend reversals
-- **Liquidity Sweep Detection**: Analyzes 5 swings to identify institutional stop hunting patterns
+- **Liquidity Sweep Detection**: Identifies liquidity grabs with close price confirmation
 - **Swing Alternation**: Enforces High-Low-High-Low sequence for clean swing structure
 - **Multi-Timeframe**: Works on any timeframe while analyzing swings from a higher timeframe
 
@@ -54,7 +56,15 @@ Detects potential trend reversals:
 
 ## Liquidity Sweep
 
-Identifies institutional stop hunting when an intermediate swing breaks at least 2 other swing levels within 5 swings.
+Detects when price takes out liquidity at a swing level before reversing.
+
+### Bullish Trend (analyze lows)
+- **Case 1**: Low1 < Low2 AND Low0 > Low1 AND High0 > High1 → Price swept low1 and reversed
+- **Case 2**: Low0 < Low1 AND (Close0 > Low1 OR High0 > High1) → New low made but rejected
+
+### Bearish Trend (analyze highs)
+- **Case 1**: High1 > High2 AND High0 < High1 AND Low0 < Low1 → Price swept high1 and reversed
+- **Case 2**: High0 > High1 AND (Close0 < High1 OR Low0 < Low1) → New high made but rejected
 
 ## Installation
 

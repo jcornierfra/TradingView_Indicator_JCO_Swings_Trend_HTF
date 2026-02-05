@@ -8,7 +8,7 @@
 //              the trend direction based on swing structure. Features include:
 //              - Trend detection: Bullish/Bearish with Momentum or Compression status
 //              - CHoCH (Change of Character) detection for potential reversals
-//              - Liquidity sweep detection using 5 swings analysis
+//              - Liquidity sweep detection with close price confirmation
 //              - Swing alternation enforcement (High-Low-High-Low sequence)
 
 //@version=6
@@ -85,6 +85,10 @@ var float phClose_0 = na
 var float plClose_0 = na
 var float lastRawPHClose = na, var float lastRawPLClose = na
 
+// Storage for swing labels (to allow moving them when swing is updated)
+var label lastSwingHighLabel = na
+var label lastSwingLowLabel = na
+
 // Detect raw changes (handle na case explicitly for first detection)
 bool rawHighChanged = not na(rawPH0) and (na(lastRawPH) or rawPH0 != lastRawPH)
 bool rawLowChanged = not na(rawPL0) and (na(lastRawPL) or rawPL0 != lastRawPL)
@@ -92,6 +96,9 @@ bool rawLowChanged = not na(rawPL0) and (na(lastRawPL) or rawPL0 != lastRawPL)
 // Flags for accepted swings
 bool newSwingHigh = false
 bool newSwingLow = false
+// Flags for updated swings (more extreme value found)
+bool updateSwingHigh = false
+bool updateSwingLow = false
 
 if validTimeframe
     // Both changed - take opposite to last (only update the accepted one's lastRaw)
@@ -136,11 +143,12 @@ if validTimeframe
             lastRawPH := rawPH0
             lastRawPHClose := rawPHClose
         else if not na(ph_0) and rawPH0 > ph_0
-            // Same type but higher - just update value (no new icon)
+            // Same type but higher - update value and move icon
             ph_0 := rawPH0
             phClose_0 := rawPHClose
             lastRawPH := rawPH0
             lastRawPHClose := rawPHClose
+            updateSwingHigh := true
         else
             // Reject this high, but mark as seen
             lastRawPH := rawPH0
@@ -159,11 +167,12 @@ if validTimeframe
             lastRawPL := rawPL0
             lastRawPLClose := rawPLClose
         else if not na(pl_0) and rawPL0 < pl_0
-            // Same type but lower - just update value (no new icon)
+            // Same type but lower - update value and move icon
             pl_0 := rawPL0
             plClose_0 := rawPLClose
             lastRawPL := rawPL0
             lastRawPLClose := rawPLClose
+            updateSwingLow := true
         else
             // Reject this low, but mark as seen
             lastRawPL := rawPL0
@@ -234,72 +243,26 @@ calcSwingsTrend(sh0, sh1, sh2, sl0, sl1, sl2) =>
             // Structure is unclear
             [NODIRECTION, 0]
 
-// ----- Calculate Liquidity Sweep (5 swings analysis) -----
-// A strong liquidity sweep occurs when an intermediate swing breaks below/above at least 2 other swing levels
-calcLiquiditySweep(direction, sh0, sh1, sh2, sh3, sh4, sl0, sl1, sl2, sl3, sl4) =>
-    // Need all 5 swings for proper analysis
-    if na(sl0) or na(sl1) or na(sl2) or na(sl3) or na(sl4) or na(sh0) or na(sh1) or na(sh2) or na(sh3) or na(sh4)
+// ----- Calculate Liquidity Sweep (3 swings analysis with close price confirmation) -----
+// Detects when price takes out liquidity at a swing level before reversing
+calcLiquiditySweep(direction, sh0, sh1, sh2, sl0, sl1, sl2, shClose0, slClose0) =>
+    // Need 3 swings of each type for proper analysis
+    if na(sl0) or na(sl1) or na(sl2) or na(sh0) or na(sh1) or na(sh2)
         false
     else if direction == BULLISH
-        // Check LL2 (index 1) - did it sweep at least 2 others?
-        int ll2SweepCount = 0
-        if sl1 < sl2
-            ll2SweepCount += 1
-        if sl1 < sl3
-            ll2SweepCount += 1
-        if sl1 < sl4
-            ll2SweepCount += 1
-
-        // Check LL3 (index 2) - did it sweep at least 2 others?
-        int ll3SweepCount = 0
-        if sl2 < sl3
-            ll3SweepCount += 1
-        if sl2 < sl4
-            ll3SweepCount += 1
-        if sl2 < sl1
-            ll3SweepCount += 1
-
-        // Check LL4 (index 3) - did it sweep at least 2 others?
-        int ll4SweepCount = 0
-        if sl3 < sl4
-            ll4SweepCount += 1
-        if sl3 < sl2
-            ll4SweepCount += 1
-        if sl3 < sl1
-            ll4SweepCount += 1
-
-        // If any intermediate swing swept at least 2 levels, it's a liquidity sweep
-        ll2SweepCount >= 2 or ll3SweepCount >= 2 or ll4SweepCount >= 2
+        // BULLISH: Look at lows for liquidity sweep
+        // Case 1: sl1 < sl2 (lower low formed), then sl0 > sl1 AND sh0 > sh1 (price reversed up)
+        bool case1 = (sl1 < sl2) and (sl0 > sl1) and (sh0 > sh1)
+        // Case 2: sl0 < sl1 (new low made), but close above sl1 OR sh0 > sh1 (rejection or reversal)
+        bool case2 = (sl0 < sl1) and ((slClose0 > sl1) or (sh0 > sh1))
+        case1 or case2
     else if direction == BEARISH
-        // Check HH2 (index 1) - did it sweep at least 2 others?
-        int hh2SweepCount = 0
-        if sh1 > sh2
-            hh2SweepCount += 1
-        if sh1 > sh3
-            hh2SweepCount += 1
-        if sh1 > sh4
-            hh2SweepCount += 1
-
-        // Check HH3 (index 2) - did it sweep at least 2 others?
-        int hh3SweepCount = 0
-        if sh2 > sh3
-            hh3SweepCount += 1
-        if sh2 > sh4
-            hh3SweepCount += 1
-        if sh2 > sh1
-            hh3SweepCount += 1
-
-        // Check HH4 (index 3) - did it sweep at least 2 others?
-        int hh4SweepCount = 0
-        if sh3 > sh4
-            hh4SweepCount += 1
-        if sh3 > sh2
-            hh4SweepCount += 1
-        if sh3 > sh1
-            hh4SweepCount += 1
-
-        // If any intermediate swing swept at least 2 levels, it's a liquidity sweep
-        hh2SweepCount >= 2 or hh3SweepCount >= 2 or hh4SweepCount >= 2
+        // BEARISH: Look at highs for liquidity sweep
+        // Case 1: sh1 > sh2 (higher high formed), then sh0 < sh1 AND sl0 < sl1 (price reversed down)
+        bool case1 = (sh1 > sh2) and (sh0 < sh1) and (sl0 < sl1)
+        // Case 2: sh0 > sh1 (new high made), but close below sh1 OR sl0 < sl1 (rejection or reversal)
+        bool case2 = (sh0 > sh1) and ((shClose0 < sh1) or (sl0 < sl1))
+        case1 or case2
     else
         false
 
@@ -352,7 +315,7 @@ else
     trendStatus := 0
     chochStatus := CONTINUATION
 
-bool liquiditySweep = validTimeframe ? calcLiquiditySweep(swingsDirection, ph_0, ph_1, ph_2, ph_3, ph_4, pl_0, pl_1, pl_2, pl_3, pl_4) : false
+bool liquiditySweep = validTimeframe ? calcLiquiditySweep(swingsDirection, ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0) : false
 
 // ----- Find the exact bar where swing occurred -----
 // Calculate how many chart bars fit in one HTF bar (for lookback range)
@@ -378,23 +341,43 @@ findSwingLowBar(float price, int lookback) =>
 
 // ----- Draw Swing Icons (only if valid timeframe) -----
 if drawSwingIcons and validTimeframe
+    // New swing high - create new label (keep previous ones)
     if newSwingHigh and not na(ph_0)
         int swingHighBar = findSwingHighBar(ph_0, htfBarsLookback)
-        // Gap based on swing price itself (constant proportion)
         float gapHigh = ph_0 * (swingIconGapPercent / 100)
         if not na(swingHighBar)
-            // style_label_down: text is ABOVE the anchor point (pointing down toward price)
-            label.new(swingHighBar, ph_0 + gapHigh, "▼",
+            lastSwingHighLabel := label.new(swingHighBar, ph_0 + gapHigh, "▼",
                  xloc=xloc.bar_index, style=label.style_label_down, textcolor=color.red,
                  color=color.new(color.white, 100), size=size.small)
 
+    // Updated swing high (more extreme) - move the label
+    if updateSwingHigh and not na(ph_0)
+        int swingHighBar = findSwingHighBar(ph_0, htfBarsLookback)
+        float gapHigh = ph_0 * (swingIconGapPercent / 100)
+        if not na(swingHighBar)
+            if not na(lastSwingHighLabel)
+                label.delete(lastSwingHighLabel)
+            lastSwingHighLabel := label.new(swingHighBar, ph_0 + gapHigh, "▼",
+                 xloc=xloc.bar_index, style=label.style_label_down, textcolor=color.red,
+                 color=color.new(color.white, 100), size=size.small)
+
+    // New swing low - create new label (keep previous ones)
     if newSwingLow and not na(pl_0)
         int swingLowBar = findSwingLowBar(pl_0, htfBarsLookback)
-        // Gap based on swing price itself (constant proportion)
         float gapLow = pl_0 * (swingIconGapPercent / 100)
         if not na(swingLowBar)
-            // style_label_up: text is BELOW the anchor point (pointing up toward price)
-            label.new(swingLowBar, pl_0 - gapLow, "▲",
+            lastSwingLowLabel := label.new(swingLowBar, pl_0 - gapLow, "▲",
+                 xloc=xloc.bar_index, style=label.style_label_up, textcolor=color.green,
+                 color=color.new(color.white, 100), size=size.small)
+
+    // Updated swing low (more extreme) - move the label
+    if updateSwingLow and not na(pl_0)
+        int swingLowBar = findSwingLowBar(pl_0, htfBarsLookback)
+        float gapLow = pl_0 * (swingIconGapPercent / 100)
+        if not na(swingLowBar)
+            if not na(lastSwingLowLabel)
+                label.delete(lastSwingLowLabel)
+            lastSwingLowLabel := label.new(swingLowBar, pl_0 - gapLow, "▲",
                  xloc=xloc.bar_index, style=label.style_label_up, textcolor=color.green,
                  color=color.new(color.white, 100), size=size.small)
 
