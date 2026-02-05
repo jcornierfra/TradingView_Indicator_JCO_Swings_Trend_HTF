@@ -1,0 +1,464 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © jcornier
+//
+// Version: 1.0
+// GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_HTF
+//
+// Description: Detects swing highs and lows on a higher timeframe (HTF) and determines
+//              the trend direction based on swing structure. Features include:
+//              - Trend detection: Bullish/Bearish with Momentum or Compression status
+//              - CHoCH (Change of Character) detection for potential reversals
+//              - Liquidity sweep detection using 5 swings analysis
+//              - Swing alternation enforcement (High-Low-High-Low sequence)
+
+//@version=6
+indicator("JCO Swings Trend HTF", overlay=true, max_labels_count=500)
+
+// ----- Inputs -----
+swingPeriod = input.int(5, "Swing Period", minval=3, group="Swings H & L")
+swingTimeFrame = input.timeframe("60", "Swing Time Frame", group="Swings H & L")
+
+drawSwingIcons = input.bool(true, "Draw Icons", group="Swings Chart")
+swingIconGapPercent = input.float(0.1, "Icon Gap (% of price)", minval=0.01, maxval=1.0, step=0.01, group="Swings Chart")
+displayDashboard = input.bool(true, "Display Dashboard", group="Swings Chart")
+displaySwingValues = input.bool(false, "Show SH/SL Values", group="Swings Chart")
+dashboardBorderWidth = input.int(0, "Dashboard Border Width", minval=0, maxval=3, group="Swings Chart")
+
+// ----- Constants -----
+int NODIRECTION = 0
+int BULLISH = 1
+int BEARISH = -1
+int MOMENTUM = 1
+int COMPRESSION = 2
+
+// CHoCH (Change of Character) constants
+int CONTINUATION = 0
+int CHOCH_BULLISH = 1
+int CHOCH_BEARISH = -1
+
+// ----- Check if chart timeframe is higher than swing timeframe -----
+int chartTFSeconds = timeframe.in_seconds(timeframe.period)
+int swingTFSeconds = timeframe.in_seconds(swingTimeFrame)
+bool validTimeframe = chartTFSeconds <= swingTFSeconds
+
+// ----- Calculate pivot offset -----
+int leftBars = swingPeriod / 2
+int rightBars = swingPeriod / 2
+
+// ----- Helper function to get pivots on HTF -----
+getPivotsHTF() =>
+    float pivotHighPrice = ta.pivothigh(leftBars, rightBars)
+    float pivotLowPrice = ta.pivotlow(leftBars, rightBars)
+    bool isPivotHigh = not na(pivotHighPrice)
+    bool isPivotLow = not na(pivotLowPrice)
+
+    float ph0 = ta.valuewhen(isPivotHigh, pivotHighPrice, 0)
+    float ph1 = ta.valuewhen(isPivotHigh, pivotHighPrice, 1)
+    float ph2 = ta.valuewhen(isPivotHigh, pivotHighPrice, 2)
+    float pl0 = ta.valuewhen(isPivotLow, pivotLowPrice, 0)
+    float pl1 = ta.valuewhen(isPivotLow, pivotLowPrice, 1)
+    float pl2 = ta.valuewhen(isPivotLow, pivotLowPrice, 2)
+
+    int phTime0 = ta.valuewhen(isPivotHigh, time[rightBars], 0)
+    int plTime0 = ta.valuewhen(isPivotLow, time[rightBars], 0)
+
+    // Close prices of the HTF candles that formed the pivots (for CHoCH detection)
+    float phClose0 = ta.valuewhen(isPivotHigh, close[rightBars], 0)
+    float plClose0 = ta.valuewhen(isPivotLow, close[rightBars], 0)
+
+    [ph0, ph1, ph2, pl0, pl1, pl2, isPivotHigh, isPivotLow, phTime0, plTime0, phClose0, plClose0]
+
+// ----- Request data from HTF -----
+[rawPH0, rawPH1, rawPH2, rawPL0, rawPL1, rawPL2, htfPivotHighFound, htfPivotLowFound, rawPHTime, rawPLTime, rawPHClose, rawPLClose] = request.security(syminfo.tickerid, swingTimeFrame, getPivotsHTF())
+
+// ----- Apply alternation filter on chart TF -----
+// Track last swing type: true = last was HIGH, false = last was LOW
+var bool lastWasHigh = false
+
+// Storage for alternating swings (5 swings for liquidity sweep analysis)
+var float ph_0 = na, var float ph_1 = na, var float ph_2 = na, var float ph_3 = na, var float ph_4 = na
+var float pl_0 = na, var float pl_1 = na, var float pl_2 = na, var float pl_3 = na, var float pl_4 = na
+var float lastRawPH = na, var float lastRawPL = na
+
+// Storage for close prices of swing candles (for CHoCH detection)
+var float phClose_0 = na
+var float plClose_0 = na
+var float lastRawPHClose = na, var float lastRawPLClose = na
+
+// Detect raw changes (handle na case explicitly for first detection)
+bool rawHighChanged = not na(rawPH0) and (na(lastRawPH) or rawPH0 != lastRawPH)
+bool rawLowChanged = not na(rawPL0) and (na(lastRawPL) or rawPL0 != lastRawPL)
+
+// Flags for accepted swings
+bool newSwingHigh = false
+bool newSwingLow = false
+
+if validTimeframe
+    // Both changed - take opposite to last (only update the accepted one's lastRaw)
+    if rawHighChanged and rawLowChanged
+        if not lastWasHigh
+            // Accept high first - shift all 5 values
+            ph_4 := ph_3
+            ph_3 := ph_2
+            ph_2 := ph_1
+            ph_1 := ph_0
+            ph_0 := rawPH0
+            phClose_0 := rawPHClose
+            lastWasHigh := true
+            newSwingHigh := true
+            lastRawPH := rawPH0
+            lastRawPHClose := rawPHClose
+            // Don't update lastRawPL - will be detected next bar
+        else
+            // Accept low first - shift all 5 values
+            pl_4 := pl_3
+            pl_3 := pl_2
+            pl_2 := pl_1
+            pl_1 := pl_0
+            pl_0 := rawPL0
+            plClose_0 := rawPLClose
+            lastWasHigh := false
+            newSwingLow := true
+            lastRawPL := rawPL0
+            lastRawPLClose := rawPLClose
+            // Don't update lastRawPH - will be detected next bar
+    else if rawHighChanged
+        if not lastWasHigh
+            // Accept high (alternates) - shift all 5 values
+            ph_4 := ph_3
+            ph_3 := ph_2
+            ph_2 := ph_1
+            ph_1 := ph_0
+            ph_0 := rawPH0
+            phClose_0 := rawPHClose
+            lastWasHigh := true
+            newSwingHigh := true
+            lastRawPH := rawPH0
+            lastRawPHClose := rawPHClose
+        else if not na(ph_0) and rawPH0 > ph_0
+            // Same type but higher - just update value (no new icon)
+            ph_0 := rawPH0
+            phClose_0 := rawPHClose
+            lastRawPH := rawPH0
+            lastRawPHClose := rawPHClose
+        else
+            // Reject this high, but mark as seen
+            lastRawPH := rawPH0
+            lastRawPHClose := rawPHClose
+    else if rawLowChanged
+        if lastWasHigh
+            // Accept low (alternates) - shift all 5 values
+            pl_4 := pl_3
+            pl_3 := pl_2
+            pl_2 := pl_1
+            pl_1 := pl_0
+            pl_0 := rawPL0
+            plClose_0 := rawPLClose
+            lastWasHigh := false
+            newSwingLow := true
+            lastRawPL := rawPL0
+            lastRawPLClose := rawPLClose
+        else if not na(pl_0) and rawPL0 < pl_0
+            // Same type but lower - just update value (no new icon)
+            pl_0 := rawPL0
+            plClose_0 := rawPLClose
+            lastRawPL := rawPL0
+            lastRawPLClose := rawPLClose
+        else
+            // Reject this low, but mark as seen
+            lastRawPL := rawPL0
+            lastRawPLClose := rawPLClose
+
+// ----- Calculate Trend (with Primary/Secondary confirmation) -----
+calcSwingsTrend(sh0, sh1, sh2, sl0, sl1, sl2) =>
+    // Check if we have enough data
+    if na(sh0) or na(sh1) or na(sh2) or na(sl0) or na(sl1) or na(sl2)
+        [NODIRECTION, 0]
+    else
+        // ==============================================
+        // TWO-LEVEL LOGIC: Primary + Secondary Confirmation
+        // ==============================================
+
+        // PRIMARY ANALYSIS - BULLISH structure based on LOWS
+        // Perfect case: LL3 < LL2 < LL1 (index 2 < 1 < 0)
+        bool perfectBullish = (sl2 < sl1) and (sl1 < sl0)
+
+        // Sweep case: LL3 > LL2 (sweep) but LL1 > LL3 (recovery above)
+        bool sweepBullish = (sl2 > sl1) and (sl0 > sl2)
+
+        // Additional check: LL1 should be higher than LL2 for any bullish scenario
+        bool ll1HigherThanLL2 = sl0 > sl1
+
+        bool primaryBullish = (perfectBullish or sweepBullish) and ll1HigherThanLL2
+
+        // Ambiguous case for bullish: LL3 > LL2 < LL1 (V-shape correction)
+        bool ambiguousBullish = (sl2 > sl1) and (sl1 < sl0)
+
+        // PRIMARY ANALYSIS - BEARISH structure based on HIGHS
+        // Perfect case: HH3 > HH2 > HH1 (index 2 > 1 > 0)
+        bool perfectBearish = (sh2 > sh1) and (sh1 > sh0)
+
+        // Sweep case: HH3 < HH2 (sweep) but HH1 < HH3 (breakdown below)
+        bool sweepBearish = (sh2 < sh1) and (sh0 < sh2)
+
+        // Additional check: HH1 should be lower than HH2 for any bearish scenario
+        bool hh1LowerThanHH2 = sh0 < sh1
+
+        bool primaryBearish = (perfectBearish or sweepBearish) and hh1LowerThanHH2
+
+        // Ambiguous case for bearish: HH3 < HH2 > HH1 (^-shape correction)
+        bool ambiguousBearish = (sh2 < sh1) and (sh1 > sh0)
+
+        // SECONDARY CONFIRMATION using opposite swings
+        bool highsConfirmBullish = sh0 > sh1  // HH1 > HH2
+        bool lowsConfirmBearish = sl0 < sl1   // LL1 < LL2
+
+        // DECISION LOGIC
+        if primaryBullish
+            // Bullish Momentum: LL1 > LL2 AND HH1 > HH2
+            // Bullish Compression: LL1 > LL2 BUT HH1 < HH2
+            int status = highsConfirmBullish ? MOMENTUM : COMPRESSION
+            [BULLISH, status]
+        else if primaryBearish
+            // Bearish Momentum: HH1 < HH2 AND LL1 < LL2
+            // Bearish Compression: HH1 < HH2 BUT LL1 > LL2
+            int status = lowsConfirmBearish ? MOMENTUM : COMPRESSION
+            [BEARISH, status]
+        else if ambiguousBullish and highsConfirmBullish
+            // Ambiguous lows but highs confirm buyer pressure
+            [BULLISH, MOMENTUM]
+        else if ambiguousBearish and lowsConfirmBearish
+            // Ambiguous highs but lows confirm seller pressure
+            [BEARISH, MOMENTUM]
+        else
+            // Structure is unclear
+            [NODIRECTION, 0]
+
+// ----- Calculate Liquidity Sweep (5 swings analysis) -----
+// A strong liquidity sweep occurs when an intermediate swing breaks below/above at least 2 other swing levels
+calcLiquiditySweep(direction, sh0, sh1, sh2, sh3, sh4, sl0, sl1, sl2, sl3, sl4) =>
+    // Need all 5 swings for proper analysis
+    if na(sl0) or na(sl1) or na(sl2) or na(sl3) or na(sl4) or na(sh0) or na(sh1) or na(sh2) or na(sh3) or na(sh4)
+        false
+    else if direction == BULLISH
+        // Check LL2 (index 1) - did it sweep at least 2 others?
+        int ll2SweepCount = 0
+        if sl1 < sl2
+            ll2SweepCount += 1
+        if sl1 < sl3
+            ll2SweepCount += 1
+        if sl1 < sl4
+            ll2SweepCount += 1
+
+        // Check LL3 (index 2) - did it sweep at least 2 others?
+        int ll3SweepCount = 0
+        if sl2 < sl3
+            ll3SweepCount += 1
+        if sl2 < sl4
+            ll3SweepCount += 1
+        if sl2 < sl1
+            ll3SweepCount += 1
+
+        // Check LL4 (index 3) - did it sweep at least 2 others?
+        int ll4SweepCount = 0
+        if sl3 < sl4
+            ll4SweepCount += 1
+        if sl3 < sl2
+            ll4SweepCount += 1
+        if sl3 < sl1
+            ll4SweepCount += 1
+
+        // If any intermediate swing swept at least 2 levels, it's a liquidity sweep
+        ll2SweepCount >= 2 or ll3SweepCount >= 2 or ll4SweepCount >= 2
+    else if direction == BEARISH
+        // Check HH2 (index 1) - did it sweep at least 2 others?
+        int hh2SweepCount = 0
+        if sh1 > sh2
+            hh2SweepCount += 1
+        if sh1 > sh3
+            hh2SweepCount += 1
+        if sh1 > sh4
+            hh2SweepCount += 1
+
+        // Check HH3 (index 2) - did it sweep at least 2 others?
+        int hh3SweepCount = 0
+        if sh2 > sh3
+            hh3SweepCount += 1
+        if sh2 > sh4
+            hh3SweepCount += 1
+        if sh2 > sh1
+            hh3SweepCount += 1
+
+        // Check HH4 (index 3) - did it sweep at least 2 others?
+        int hh4SweepCount = 0
+        if sh3 > sh4
+            hh4SweepCount += 1
+        if sh3 > sh2
+            hh4SweepCount += 1
+        if sh3 > sh1
+            hh4SweepCount += 1
+
+        // If any intermediate swing swept at least 2 levels, it's a liquidity sweep
+        hh2SweepCount >= 2 or hh3SweepCount >= 2 or hh4SweepCount >= 2
+    else
+        false
+
+// ----- Calculate CHoCH (Change of Character) -----
+// CHoCH detects the first sign of a potential trend reversal
+calcCHoCH(sh0, sh1, sh2, sl0, sl1, sl2, sh0Close, sl0Close) =>
+    // Need 3 swings of each type for CHoCH detection
+    if na(sh0) or na(sh1) or na(sh2) or na(sl0) or na(sl1) or na(sl2) or na(sh0Close) or na(sl0Close)
+        CONTINUATION
+    else
+        // ============================================
+        // CHoCH BULLISH: Requires previous bearish structure (LH) then a break
+        // - Previous structure must be bearish: HH2 < HH3 (sh1 < sh2) - lower highs
+        // - Then HH1 > HH2 (sh0 > sh1) - breaks the lower high pattern
+        // - The candle that formed HH1 must have closed above HH2
+        // ============================================
+        bool previousBearishStructure = sh1 < sh2  // HH2 < HH3
+        bool hh1AboveHH2 = sh0 > sh1
+        bool hh1CandleClosedAboveHH2 = sh0Close > sh1
+
+        if previousBearishStructure and hh1AboveHH2 and hh1CandleClosedAboveHH2
+            CHOCH_BULLISH
+        else
+            // ============================================
+            // CHoCH BEARISH: Requires previous bullish structure (HL) then a break
+            // - Previous structure must be bullish: LL2 > LL3 (sl1 > sl2) - higher lows
+            // - Then LL1 < LL2 (sl0 < sl1) - breaks the higher low pattern
+            // - The candle that formed LL1 must have closed below LL2
+            // ============================================
+            bool previousBullishStructure = sl1 > sl2  // LL2 > LL3
+            bool ll1BelowLL2 = sl0 < sl1
+            bool ll1CandleClosedBelowLL2 = sl0Close < sl1
+
+            if previousBullishStructure and ll1BelowLL2 and ll1CandleClosedBelowLL2
+                CHOCH_BEARISH
+            else
+                CONTINUATION
+
+// ----- Get current trend, liquidity sweep, and CHoCH (only if valid timeframe) -----
+var int swingsDirection = NODIRECTION
+var int trendStatus = 0
+var int chochStatus = CONTINUATION
+if validTimeframe
+    [dir, status] = calcSwingsTrend(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2)
+    swingsDirection := dir
+    trendStatus := status
+    chochStatus := calcCHoCH(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0)
+else
+    swingsDirection := NODIRECTION
+    trendStatus := 0
+    chochStatus := CONTINUATION
+
+bool liquiditySweep = validTimeframe ? calcLiquiditySweep(swingsDirection, ph_0, ph_1, ph_2, ph_3, ph_4, pl_0, pl_1, pl_2, pl_3, pl_4) : false
+
+// ----- Find the exact bar where swing occurred -----
+// Calculate how many chart bars fit in one HTF bar (for lookback range)
+int htfBarsLookback = math.max(50, int(swingTFSeconds / chartTFSeconds) * (rightBars + 3))
+
+// Function to find bar index where high matches the swing price
+findSwingHighBar(float price, int lookback) =>
+    int foundBar = na
+    for i = 0 to lookback
+        if high[i] == price
+            foundBar := bar_index - i
+            break
+    foundBar
+
+// Function to find bar index where low matches the swing price
+findSwingLowBar(float price, int lookback) =>
+    int foundBar = na
+    for i = 0 to lookback
+        if low[i] == price
+            foundBar := bar_index - i
+            break
+    foundBar
+
+// ----- Draw Swing Icons (only if valid timeframe) -----
+if drawSwingIcons and validTimeframe
+    if newSwingHigh and not na(ph_0)
+        int swingHighBar = findSwingHighBar(ph_0, htfBarsLookback)
+        // Gap based on swing price itself (constant proportion)
+        float gapHigh = ph_0 * (swingIconGapPercent / 100)
+        if not na(swingHighBar)
+            // style_label_down: text is ABOVE the anchor point (pointing down toward price)
+            label.new(swingHighBar, ph_0 + gapHigh, "▼",
+                 xloc=xloc.bar_index, style=label.style_label_down, textcolor=color.red,
+                 color=color.new(color.white, 100), size=size.small)
+
+    if newSwingLow and not na(pl_0)
+        int swingLowBar = findSwingLowBar(pl_0, htfBarsLookback)
+        // Gap based on swing price itself (constant proportion)
+        float gapLow = pl_0 * (swingIconGapPercent / 100)
+        if not na(swingLowBar)
+            // style_label_up: text is BELOW the anchor point (pointing up toward price)
+            label.new(swingLowBar, pl_0 - gapLow, "▲",
+                 xloc=xloc.bar_index, style=label.style_label_up, textcolor=color.green,
+                 color=color.new(color.white, 100), size=size.small)
+
+// ----- Dashboard -----
+if displayDashboard and barstate.islast
+    // Build table (smaller with no separators)
+    var table dashboard = table.new(position.top_right, 2, 12, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
+
+    if not validTimeframe
+        // Show error message when chart TF > swing TF
+        table.cell(dashboard, 0, 0, "Chart TF > Swing TF", text_color=color.orange, text_halign=text.align_left, text_size=size.small)
+        table.cell(dashboard, 1, 0, "N/A", text_color=color.orange, text_halign=text.align_right, text_size=size.small)
+    else
+        // Calculate expansion in pips
+        float pipSize = syminfo.mintick * 100
+        float swingsExpansion = na(ph_0) or na(pl_0) ? na : (ph_0 - pl_0) / pipSize
+
+        // Time frame row
+        table.cell(dashboard, 0, 0, "TF", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+        table.cell(dashboard, 1, 0, swingTimeFrame, text_color=color.gray, text_halign=text.align_right, text_size=size.small)
+
+        // Direction row (with status: Momentum or Compression)
+        string statusText = trendStatus == MOMENTUM ? " (M)" : trendStatus == COMPRESSION ? " (C)" : ""
+        string dirText = swingsDirection == BULLISH ? "Bullish" + statusText : swingsDirection == BEARISH ? "Bearish" + statusText : "Unclear"
+        color dirColor = swingsDirection == BULLISH ? color.lime : swingsDirection == BEARISH ? color.red : color.white
+        table.cell(dashboard, 0, 1, "Trend", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+        table.cell(dashboard, 1, 1, dirText, text_color=dirColor, text_halign=text.align_right, text_size=size.small)
+
+        // CHoCH row
+        string chochText = chochStatus == CHOCH_BULLISH ? "Bullish" : chochStatus == CHOCH_BEARISH ? "Bearish" : "Continuation"
+        color chochColor = chochStatus == CHOCH_BULLISH ? color.lime : chochStatus == CHOCH_BEARISH ? color.red : color.gray
+        table.cell(dashboard, 0, 2, "CHoCH", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+        table.cell(dashboard, 1, 2, chochText, text_color=chochColor, text_halign=text.align_right, text_size=size.small)
+
+        // Liquidity sweep row
+        string liqText = liquiditySweep ? "Yes" : "No"
+        table.cell(dashboard, 0, 3, "Liq Sweep", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+        table.cell(dashboard, 1, 3, liqText, text_color=color.gray, text_halign=text.align_right, text_size=size.small)
+
+        // Expansion row
+        table.cell(dashboard, 0, 4, "Expansion", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+        table.cell(dashboard, 1, 4, na(swingsExpansion) ? "N/A" : str.tostring(swingsExpansion, "#.##"), text_color=color.aqua, text_halign=text.align_right, text_size=size.small)
+
+        // Swing highs and lows (optional)
+        if displaySwingValues
+            table.cell(dashboard, 0, 5, "SH -2", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+            table.cell(dashboard, 1, 5, na(ph_2) ? "N/A" : str.tostring(ph_2, format.mintick), text_color=color.gray, text_halign=text.align_right, text_size=size.small)
+
+            table.cell(dashboard, 0, 6, "SH -1", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+            table.cell(dashboard, 1, 6, na(ph_1) ? "N/A" : str.tostring(ph_1, format.mintick), text_color=color.gray, text_halign=text.align_right, text_size=size.small)
+
+            table.cell(dashboard, 0, 7, "SH 0", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+            table.cell(dashboard, 1, 7, na(ph_0) ? "N/A" : str.tostring(ph_0, format.mintick), text_color=color.red, text_halign=text.align_right, text_size=size.small)
+
+            table.cell(dashboard, 0, 8, "SL -2", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+            table.cell(dashboard, 1, 8, na(pl_2) ? "N/A" : str.tostring(pl_2, format.mintick), text_color=color.gray, text_halign=text.align_right, text_size=size.small)
+
+            table.cell(dashboard, 0, 9, "SL -1", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+            table.cell(dashboard, 1, 9, na(pl_1) ? "N/A" : str.tostring(pl_1, format.mintick), text_color=color.gray, text_halign=text.align_right, text_size=size.small)
+
+            table.cell(dashboard, 0, 10, "SL 0", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+            table.cell(dashboard, 1, 10, na(pl_0) ? "N/A" : str.tostring(pl_0, format.mintick), text_color=color.green, text_halign=text.align_right, text_size=size.small)
+
+// ----- Plot hidden values for alerts -----
+plot(swingsDirection, "Trend Direction", display=display.none)
+plot(chochStatus, "CHoCH Status", display=display.none)
+plot(liquiditySweep ? 1 : 0, "Liquidity Sweep", display=display.none)
