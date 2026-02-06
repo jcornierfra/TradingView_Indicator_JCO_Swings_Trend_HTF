@@ -49,10 +49,12 @@ The indicator displays a compact dashboard with:
 
 ## CHoCH (Change of Character)
 
-Detects potential trend reversals:
+Detects potential trend reversals by evaluating the previous trend (using swings 1, 2, 3) and checking if swing 0 breaks swing 1 with close confirmation:
 
-- **Bullish CHoCH**: Previous bearish structure (lower highs) broken by a higher high with candle close above
-- **Bearish CHoCH**: Previous bullish structure (higher lows) broken by a lower low with candle close below
+- **Bullish CHoCH**: Previous trend was not bullish + higher high (swing 0 > swing 1) + close confirmation
+- **Bearish CHoCH**: Previous trend was not bearish + lower low (swing 0 < swing 1) + close confirmation
+
+Close confirmation uses a 5-candle window (2 before, pivot, 2 after) in the swing timeframe to handle immediate rebalance scenarios (long wick candles).
 
 ## Liquidity Sweep
 

@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.0
+// Version: 1.1
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_HTF
 //
 // Description: Detects swing highs and lows on a higher timeframe (HTF) and determines
@@ -9,7 +9,7 @@
 //              - Trend detection: Bullish/Bearish with Momentum or Compression status
 //              - CHoCH (Change of Character) detection for potential reversals
 //              - Liquidity sweep detection with close price confirmation
-//              - Swing alternation enforcement (High-Low-High-Low sequence)
+//              - Swing alternation with automatic missing swing insertion
 
 //@version=6
 indicator("JCO Swings Trend HTF", overlay=true, max_labels_count=500)
@@ -62,14 +62,75 @@ getPivotsHTF() =>
     int phTime0 = ta.valuewhen(isPivotHigh, time[rightBars], 0)
     int plTime0 = ta.valuewhen(isPivotLow, time[rightBars], 0)
 
-    // Close prices of the HTF candles that formed the pivots (for CHoCH detection)
-    float phClose0 = ta.valuewhen(isPivotHigh, close[rightBars], 0)
-    float plClose0 = ta.valuewhen(isPivotLow, close[rightBars], 0)
+    // Close prices: best close in 5-candle window around pivot (for CHoCH detection)
+    // Window: 2 candles before, pivot candle, 2 candles after (in swing TF)
+    // For swing highs: max close (best chance of closing above previous high for CHoCH bullish)
+    // For swing lows: min close (best chance of closing below previous low for CHoCH bearish)
+    float _rb2Close = rightBars >= 2 ? close[rightBars - 2] : close[rightBars]
+    float _windowMaxClose = math.max(math.max(close[rightBars + 2], close[rightBars + 1]), math.max(math.max(close[rightBars], close[rightBars - 1]), _rb2Close))
+    float _windowMinClose = math.min(math.min(close[rightBars + 2], close[rightBars + 1]), math.min(math.min(close[rightBars], close[rightBars - 1]), _rb2Close))
+    float phClose0 = ta.valuewhen(isPivotHigh, _windowMaxClose, 0)
+    float plClose0 = ta.valuewhen(isPivotLow, _windowMinClose, 0)
 
     [ph0, ph1, ph2, pl0, pl1, pl2, isPivotHigh, isPivotLow, phTime0, plTime0, phClose0, plClose0]
 
 // ----- Request data from HTF -----
 [rawPH0, rawPH1, rawPH2, rawPL0, rawPL1, rawPL2, htfPivotHighFound, htfPivotLowFound, rawPHTime, rawPLTime, rawPHClose, rawPLClose] = request.security(syminfo.tickerid, swingTimeFrame, getPivotsHTF())
+
+// ----- Helper functions for swing bar detection -----
+int htfBarsLookback = math.max(50, int(swingTFSeconds / chartTFSeconds) * (rightBars + 3))
+
+// Find bar index where high matches the swing price
+findSwingHighBar(float price, int lookback) =>
+    int foundBar = na
+    for i = 0 to lookback
+        if high[i] == price
+            foundBar := bar_index - i
+            break
+    foundBar
+
+// Find bar index where low matches the swing price
+findSwingLowBar(float price, int lookback) =>
+    int foundBar = na
+    for i = 0 to lookback
+        if low[i] == price
+            foundBar := bar_index - i
+            break
+    foundBar
+
+// Find the lowest low between two bar indices (exclusive of endpoints)
+// Used to find missing swing lows between consecutive swing highs
+findLowestLowBetween(int olderBarIdx, int newerBarIdx) =>
+    float resultPrice = na
+    int resultBar = na
+    float resultClose = na
+    if not na(olderBarIdx) and not na(newerBarIdx) and newerBarIdx > olderBarIdx + 1
+        int startLb = bar_index - olderBarIdx - 1
+        int endLb = bar_index - newerBarIdx + 1
+        for i = endLb to startLb
+            if i >= 0
+                if na(resultPrice) or low[i] < resultPrice
+                    resultPrice := low[i]
+                    resultBar := bar_index - i
+                    resultClose := close[i]
+    [resultPrice, resultBar, resultClose]
+
+// Find the highest high between two bar indices (exclusive of endpoints)
+// Used to find missing swing highs between consecutive swing lows
+findHighestHighBetween(int olderBarIdx, int newerBarIdx) =>
+    float resultPrice = na
+    int resultBar = na
+    float resultClose = na
+    if not na(olderBarIdx) and not na(newerBarIdx) and newerBarIdx > olderBarIdx + 1
+        int startLb = bar_index - olderBarIdx - 1
+        int endLb = bar_index - newerBarIdx + 1
+        for i = endLb to startLb
+            if i >= 0
+                if na(resultPrice) or high[i] > resultPrice
+                    resultPrice := high[i]
+                    resultBar := bar_index - i
+                    resultClose := close[i]
+    [resultPrice, resultBar, resultClose]
 
 // ----- Apply alternation filter on chart TF -----
 // Track last swing type: true = last was HIGH, false = last was LOW
@@ -89,6 +150,10 @@ var float lastRawPHClose = na, var float lastRawPLClose = na
 var label lastSwingHighLabel = na
 var label lastSwingLowLabel = na
 
+// Track bar indices of last accepted swings (for finding missing opposite swings)
+var int lastAcceptedHighBar = na
+var int lastAcceptedLowBar = na
+
 // Detect raw changes (handle na case explicitly for first detection)
 bool rawHighChanged = not na(rawPH0) and (na(lastRawPH) or rawPH0 != lastRawPH)
 bool rawLowChanged = not na(rawPL0) and (na(lastRawPL) or rawPL0 != lastRawPL)
@@ -104,7 +169,7 @@ if validTimeframe
     // Both changed - take opposite to last (only update the accepted one's lastRaw)
     if rawHighChanged and rawLowChanged
         if not lastWasHigh
-            // Accept high first - shift all 5 values
+            // Accept high first - shift all values
             ph_4 := ph_3
             ph_3 := ph_2
             ph_2 := ph_1
@@ -115,9 +180,10 @@ if validTimeframe
             newSwingHigh := true
             lastRawPH := rawPH0
             lastRawPHClose := rawPHClose
+            lastAcceptedHighBar := findSwingHighBar(rawPH0, htfBarsLookback)
             // Don't update lastRawPL - will be detected next bar
         else
-            // Accept low first - shift all 5 values
+            // Accept low first - shift all values
             pl_4 := pl_3
             pl_3 := pl_2
             pl_2 := pl_1
@@ -128,10 +194,11 @@ if validTimeframe
             newSwingLow := true
             lastRawPL := rawPL0
             lastRawPLClose := rawPLClose
+            lastAcceptedLowBar := findSwingLowBar(rawPL0, htfBarsLookback)
             // Don't update lastRawPH - will be detected next bar
     else if rawHighChanged
         if not lastWasHigh
-            // Accept high (alternates) - shift all 5 values
+            // Accept high (alternates) - shift all values
             ph_4 := ph_3
             ph_3 := ph_2
             ph_2 := ph_1
@@ -142,20 +209,45 @@ if validTimeframe
             newSwingHigh := true
             lastRawPH := rawPH0
             lastRawPHClose := rawPHClose
-        else if not na(ph_0) and rawPH0 > ph_0
-            // Same type but higher - update value and move icon
-            ph_0 := rawPH0
-            phClose_0 := rawPHClose
-            lastRawPH := rawPH0
-            lastRawPHClose := rawPHClose
-            updateSwingHigh := true
+            lastAcceptedHighBar := findSwingHighBar(rawPH0, htfBarsLookback)
         else
-            // Reject this high, but mark as seen
+            // Consecutive high - find missing low between previous high and this one
+            int newHighBar = findSwingHighBar(rawPH0, htfBarsLookback)
+            bool missingFound = false
+            if not na(newHighBar) and not na(lastAcceptedHighBar)
+                [mPrice, mBar, mClose] = findLowestLowBetween(lastAcceptedHighBar, newHighBar)
+                if not na(mPrice)
+                    // Insert missing low (use swing price as close - no candle confirmation needed)
+                    pl_4 := pl_3
+                    pl_3 := pl_2
+                    pl_2 := pl_1
+                    pl_1 := pl_0
+                    pl_0 := mPrice
+                    plClose_0 := mPrice
+                    newSwingLow := true
+                    lastAcceptedLowBar := mBar
+                    // Accept new high
+                    ph_4 := ph_3
+                    ph_3 := ph_2
+                    ph_2 := ph_1
+                    ph_1 := ph_0
+                    ph_0 := rawPH0
+                    phClose_0 := rawPHClose
+                    newSwingHigh := true
+                    lastAcceptedHighBar := newHighBar
+                    missingFound := true
+            if not missingFound and not na(ph_0) and rawPH0 > ph_0
+                // Fallback: update value if more extreme (no bars between swings)
+                ph_0 := rawPH0
+                phClose_0 := rawPHClose
+                updateSwingHigh := true
+                if not na(newHighBar)
+                    lastAcceptedHighBar := newHighBar
             lastRawPH := rawPH0
             lastRawPHClose := rawPHClose
     else if rawLowChanged
         if lastWasHigh
-            // Accept low (alternates) - shift all 5 values
+            // Accept low (alternates) - shift all values
             pl_4 := pl_3
             pl_3 := pl_2
             pl_2 := pl_1
@@ -166,15 +258,40 @@ if validTimeframe
             newSwingLow := true
             lastRawPL := rawPL0
             lastRawPLClose := rawPLClose
-        else if not na(pl_0) and rawPL0 < pl_0
-            // Same type but lower - update value and move icon
-            pl_0 := rawPL0
-            plClose_0 := rawPLClose
-            lastRawPL := rawPL0
-            lastRawPLClose := rawPLClose
-            updateSwingLow := true
+            lastAcceptedLowBar := findSwingLowBar(rawPL0, htfBarsLookback)
         else
-            // Reject this low, but mark as seen
+            // Consecutive low - find missing high between previous low and this one
+            int newLowBar = findSwingLowBar(rawPL0, htfBarsLookback)
+            bool missingFound = false
+            if not na(newLowBar) and not na(lastAcceptedLowBar)
+                [mPrice, mBar, mClose] = findHighestHighBetween(lastAcceptedLowBar, newLowBar)
+                if not na(mPrice)
+                    // Insert missing high
+                    ph_4 := ph_3
+                    ph_3 := ph_2
+                    ph_2 := ph_1
+                    ph_1 := ph_0
+                    ph_0 := mPrice
+                    phClose_0 := mPrice
+                    newSwingHigh := true
+                    lastAcceptedHighBar := mBar
+                    // Accept new low
+                    pl_4 := pl_3
+                    pl_3 := pl_2
+                    pl_2 := pl_1
+                    pl_1 := pl_0
+                    pl_0 := rawPL0
+                    plClose_0 := rawPLClose
+                    newSwingLow := true
+                    lastAcceptedLowBar := newLowBar
+                    missingFound := true
+            if not missingFound and not na(pl_0) and rawPL0 < pl_0
+                // Fallback: update value if more extreme (no bars between swings)
+                pl_0 := rawPL0
+                plClose_0 := rawPLClose
+                updateSwingLow := true
+                if not na(newLowBar)
+                    lastAcceptedLowBar := newLowBar
             lastRawPL := rawPL0
             lastRawPLClose := rawPLClose
 
@@ -268,35 +385,27 @@ calcLiquiditySweep(direction, sh0, sh1, sh2, sl0, sl1, sl2, shClose0, slClose0) 
 
 // ----- Calculate CHoCH (Change of Character) -----
 // CHoCH detects the first sign of a potential trend reversal
-calcCHoCH(sh0, sh1, sh2, sl0, sl1, sl2, sh0Close, sl0Close) =>
-    // Need 3 swings of each type for CHoCH detection
-    if na(sh0) or na(sh1) or na(sh2) or na(sl0) or na(sl1) or na(sl2) or na(sh0Close) or na(sl0Close)
+// Calculates the previous trend using swings BEFORE the current ones (sh1-sh3, sl1-sl3)
+// to detect transitions from Bearish/Unclear to Bullish (or vice versa)
+calcCHoCH(sh0, sh1, sh2, sl0, sl1, sl2, sh0Close, sl0Close, prevDir, hasPrevTrend) =>
+    if na(sh0) or na(sh1) or na(sl0) or na(sl1) or na(sh0Close) or na(sl0Close)
         CONTINUATION
     else
-        // ============================================
-        // CHoCH BULLISH: Requires previous bearish structure (LH) then a break
-        // - Previous structure must be bearish: HH2 < HH3 (sh1 < sh2) - lower highs
-        // - Then HH1 > HH2 (sh0 > sh1) - breaks the lower high pattern
-        // - The candle that formed HH1 must have closed above HH2
-        // ============================================
-        bool previousBearishStructure = sh1 < sh2  // HH2 < HH3
+        // CHoCH BULLISH: previous trend was NOT bullish + higher high with close confirmation
+        // When only 3 swings available, fall back to direct structure check (sh1 < sh2)
         bool hh1AboveHH2 = sh0 > sh1
         bool hh1CandleClosedAboveHH2 = sh0Close > sh1
+        bool prevNotBullish = hasPrevTrend ? (prevDir != BULLISH) : (not na(sh2) and sh1 < sh2)
 
-        if previousBearishStructure and hh1AboveHH2 and hh1CandleClosedAboveHH2
+        if prevNotBullish and hh1AboveHH2 and hh1CandleClosedAboveHH2
             CHOCH_BULLISH
         else
-            // ============================================
-            // CHoCH BEARISH: Requires previous bullish structure (HL) then a break
-            // - Previous structure must be bullish: LL2 > LL3 (sl1 > sl2) - higher lows
-            // - Then LL1 < LL2 (sl0 < sl1) - breaks the higher low pattern
-            // - The candle that formed LL1 must have closed below LL2
-            // ============================================
-            bool previousBullishStructure = sl1 > sl2  // LL2 > LL3
+            // CHoCH BEARISH: previous trend was NOT bearish + lower low with close confirmation
             bool ll1BelowLL2 = sl0 < sl1
             bool ll1CandleClosedBelowLL2 = sl0Close < sl1
+            bool prevNotBearish = hasPrevTrend ? (prevDir != BEARISH) : (not na(sl2) and sl1 > sl2)
 
-            if previousBullishStructure and ll1BelowLL2 and ll1CandleClosedBelowLL2
+            if prevNotBearish and ll1BelowLL2 and ll1CandleClosedBelowLL2
                 CHOCH_BEARISH
             else
                 CONTINUATION
@@ -305,39 +414,21 @@ calcCHoCH(sh0, sh1, sh2, sl0, sl1, sl2, sh0Close, sl0Close) =>
 var int swingsDirection = NODIRECTION
 var int trendStatus = 0
 var int chochStatus = CONTINUATION
+// Calculate previous trend for CHoCH (at top level to avoid Pine Script nested function call issues)
+[prevTrendDir, prevTrendStatus] = calcSwingsTrend(ph_1, ph_2, ph_3, pl_1, pl_2, pl_3)
+bool hasPrevTrend = not na(ph_3) and not na(pl_3)
+
 if validTimeframe
     [dir, status] = calcSwingsTrend(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2)
     swingsDirection := dir
     trendStatus := status
-    chochStatus := calcCHoCH(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0)
+    chochStatus := calcCHoCH(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0, prevTrendDir, hasPrevTrend)
 else
     swingsDirection := NODIRECTION
     trendStatus := 0
     chochStatus := CONTINUATION
 
 bool liquiditySweep = validTimeframe ? calcLiquiditySweep(swingsDirection, ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0) : false
-
-// ----- Find the exact bar where swing occurred -----
-// Calculate how many chart bars fit in one HTF bar (for lookback range)
-int htfBarsLookback = math.max(50, int(swingTFSeconds / chartTFSeconds) * (rightBars + 3))
-
-// Function to find bar index where high matches the swing price
-findSwingHighBar(float price, int lookback) =>
-    int foundBar = na
-    for i = 0 to lookback
-        if high[i] == price
-            foundBar := bar_index - i
-            break
-    foundBar
-
-// Function to find bar index where low matches the swing price
-findSwingLowBar(float price, int lookback) =>
-    int foundBar = na
-    for i = 0 to lookback
-        if low[i] == price
-            foundBar := bar_index - i
-            break
-    foundBar
 
 // ----- Draw Swing Icons (only if valid timeframe) -----
 if drawSwingIcons and validTimeframe
