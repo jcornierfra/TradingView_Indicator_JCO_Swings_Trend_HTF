@@ -2,7 +2,7 @@
 
 Pine Script indicator for TradingView that detects swing highs and lows on a higher timeframe (HTF) and determines the trend direction based on swing structure.
 
-![JCO Swings Trend HTF Screenshot](screenshot.png)
+![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.1)
 
 ## Features
 
