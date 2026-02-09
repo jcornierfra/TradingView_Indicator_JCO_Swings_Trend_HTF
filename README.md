@@ -116,4 +116,4 @@ This project is licensed under the Mozilla Public License 2.0 - see the [LICENSE
 
 ## Author
 
-- **jcornier** - [GitHub](https://github.com/jcornierfra)
+- **Jerome Cornier** - [GitHub](https://github.com/jcornierfra)
