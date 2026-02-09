@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.1
+// Version: 1.2
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_HTF
 //
 // Description: Detects swing highs and lows on a higher timeframe (HTF) and determines
@@ -10,6 +10,13 @@
 //              - CHoCH (Change of Character) detection for potential reversals
 //              - Liquidity sweep detection with close price confirmation
 //              - Swing alternation with automatic missing swing insertion
+//
+// Changelog:
+//   v1.0 - 2026-02-05: Initial release
+//   v1.1 - 2026-02-06: CHoCH detection with previous trend analysis (swings 1,2,3)
+//                       and 5-candle close confirmation window
+//   v1.2 - 2026-02-09: Gate trend change (require CHoCH confirmation for reversals),
+//                       "Unclear" displayed in gray
 
 //@version=6
 indicator("JCO Swings Trend HTF", overlay=true, max_labels_count=500)
@@ -410,6 +417,29 @@ calcCHoCH(sh0, sh1, sh2, sl0, sl1, sl2, sh0Close, sl0Close, prevDir, hasPrevTren
             else
                 CONTINUATION
 
+// ----- Gate Trend Change (require CHoCH confirmation for reversals) -----
+// When the raw trend reverses vs the previous trend, require CHoCH confirmation.
+// Without CHoCH, check if structure still supports the previous trend (compression).
+gateTrendChange(int rawDir, int rawStatus, int prevDir, int choch, float sh0, float sh3, float sl0, float sl3) =>
+    if prevDir == BULLISH and rawDir == BEARISH
+        if choch == CHOCH_BEARISH
+            [BEARISH, rawStatus]
+        else
+            if not na(sh0) and not na(sh3) and sh0 > sh3
+                [BULLISH, COMPRESSION]
+            else
+                [NODIRECTION, 0]
+    else if prevDir == BEARISH and rawDir == BULLISH
+        if choch == CHOCH_BULLISH
+            [BULLISH, rawStatus]
+        else
+            if not na(sl0) and not na(sl3) and sl0 < sl3
+                [BEARISH, COMPRESSION]
+            else
+                [NODIRECTION, 0]
+    else
+        [rawDir, rawStatus]
+
 // ----- Get current trend, liquidity sweep, and CHoCH (only if valid timeframe) -----
 var int swingsDirection = NODIRECTION
 var int trendStatus = 0
@@ -419,10 +449,11 @@ var int chochStatus = CONTINUATION
 bool hasPrevTrend = not na(ph_3) and not na(pl_3)
 
 if validTimeframe
-    [dir, status] = calcSwingsTrend(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2)
+    [rawDir, rawStatus] = calcSwingsTrend(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2)
+    chochStatus := calcCHoCH(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0, prevTrendDir, hasPrevTrend)
+    [dir, status] = gateTrendChange(rawDir, rawStatus, prevTrendDir, chochStatus, ph_0, ph_3, pl_0, pl_3)
     swingsDirection := dir
     trendStatus := status
-    chochStatus := calcCHoCH(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0, prevTrendDir, hasPrevTrend)
 else
     swingsDirection := NODIRECTION
     trendStatus := 0
@@ -493,7 +524,7 @@ if displayDashboard and barstate.islast
         // Direction row (with status: Momentum or Compression)
         string statusText = trendStatus == MOMENTUM ? " (M)" : trendStatus == COMPRESSION ? " (C)" : ""
         string dirText = swingsDirection == BULLISH ? "Bullish" + statusText : swingsDirection == BEARISH ? "Bearish" + statusText : "Unclear"
-        color dirColor = swingsDirection == BULLISH ? color.lime : swingsDirection == BEARISH ? color.red : color.white
+        color dirColor = swingsDirection == BULLISH ? color.lime : swingsDirection == BEARISH ? color.red : color.gray
         table.cell(dashboard, 0, 1, "Trend", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
         table.cell(dashboard, 1, 1, dirText, text_color=dirColor, text_halign=text.align_right, text_size=size.small)
 
