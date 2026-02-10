@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.3
+// Version: 1.4
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_HTF
 //
 // Description: Detects swing highs and lows on a higher timeframe (HTF) and determines
@@ -19,6 +19,7 @@
 //                       "Unclear" displayed in gray
 //   v1.3 - 2026-02-10: Dual CHoCH detection with liquidity sweep restoration
 //                       (aligned with cTrader v1.7)
+//   v1.4 - 2026-02-10: Configurable pip value parameter (replaces hardcoded mintick * 100)
 
 //@version=6
 indicator("JCO Swings Trend HTF", overlay=true, max_labels_count=500)
@@ -31,6 +32,7 @@ drawSwingIcons = input.bool(true, "Draw Icons", group="Swings Chart")
 swingIconGapPercent = input.float(0.1, "Icon Gap (% of price)", minval=0.01, maxval=1.0, step=0.01, group="Swings Chart")
 displayDashboard = input.bool(true, "Display Dashboard", group="Swings Chart")
 displaySwingValues = input.bool(false, "Show SH/SL Values", group="Swings Chart")
+pipValue = input.float(0.1, "Pip Value ($)", minval=0.0001, step=0.01, tooltip="Value of 1 pip in price units. Gold: 0.1, Forex majors: 0.0001", group="Swings Chart")
 dashboardBorderWidth = input.int(0, "Dashboard Border Width", minval=0, maxval=3, group="Swings Chart")
 
 // ----- Constants -----
@@ -539,8 +541,7 @@ if displayDashboard and barstate.islast
         table.cell(dashboard, 1, 0, "N/A", text_color=color.orange, text_halign=text.align_right, text_size=size.small)
     else
         // Calculate expansion in pips
-        float pipSize = syminfo.mintick * 100
-        float swingsExpansion = na(ph_0) or na(pl_0) ? na : (ph_0 - pl_0) / pipSize
+        float swingsExpansion = na(ph_0) or na(pl_0) ? na : (ph_0 - pl_0) / pipValue
 
         // Time frame row
         table.cell(dashboard, 0, 0, "TF", text_color=color.gray, text_halign=text.align_left, text_size=size.small)

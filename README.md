@@ -2,7 +2,7 @@
 
 Pine Script indicator for TradingView that detects swing highs and lows on a higher timeframe (HTF) and determines the trend direction based on swing structure.
 
-![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.3)
+![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.4)
 
 ## Features
 
@@ -39,6 +39,7 @@ The indicator displays a compact dashboard with:
 - **Icon Gap (% of price)**: Distance of icons from price level
 - **Display Dashboard**: Show/hide the dashboard table
 - **Show SH/SL Values**: Display swing high/low price values in dashboard
+- **Pip Value ($)**: Value of 1 pip in price units (default: 0.1 for Gold, 0.0001 for Forex majors)
 - **Dashboard Border Width**: Border thickness (0 = no borders)
 
 ## Trend Logic
@@ -127,6 +128,7 @@ The indicator enforces a strict High-Low-High-Low alternation. When consecutive 
 - **v1.1** (2026-02-06): CHoCH detection with previous trend analysis and 5-candle close confirmation window
 - **v1.2** (2026-02-09): Trend reversal gating (require CHoCH confirmation), "Unclear" displayed in gray
 - **v1.3** (2026-02-10): Dual CHoCH detection (simultaneous bullish/bearish evaluation), CHoCH liquidity sweep identification
+- **v1.4** (2026-02-10): Configurable pip value parameter (replaces hardcoded mintick * 100)
 
 ## Installation
 
