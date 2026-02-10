@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.2
+// Version: 1.3
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_HTF
 //
 // Description: Detects swing highs and lows on a higher timeframe (HTF) and determines
@@ -17,6 +17,8 @@
 //                       and 5-candle close confirmation window
 //   v1.2 - 2026-02-09: Gate trend change (require CHoCH confirmation for reversals),
 //                       "Unclear" displayed in gray
+//   v1.3 - 2026-02-10: Dual CHoCH detection with liquidity sweep restoration
+//                       (aligned with cTrader v1.7)
 
 //@version=6
 indicator("JCO Swings Trend HTF", overlay=true, max_labels_count=500)
@@ -391,54 +393,73 @@ calcLiquiditySweep(direction, sh0, sh1, sh2, sl0, sl1, sl2, shClose0, slClose0) 
         false
 
 // ----- Calculate CHoCH (Change of Character) -----
-// CHoCH detects the first sign of a potential trend reversal
-// Calculates the previous trend using swings BEFORE the current ones (sh1-sh3, sl1-sl3)
-// to detect transitions from Bearish/Unclear to Bullish (or vice versa)
-calcCHoCH(sh0, sh1, sh2, sl0, sl1, sl2, sh0Close, sl0Close, prevDir, hasPrevTrend) =>
+// Dual CHoCH: detects both bullish and bearish CHoCH simultaneously
+// When both exist, prioritizes the most recent one (by lastSwingWasHigh)
+// If the most recent CHoCH matches prevDir → liquidity sweep pattern
+calcCHoCH(sh0, sh1, sh2, sl0, sl1, sl2, sh0Close, sl0Close, prevDir, hasPrevTrend, lastSwingWasHigh) =>
     if na(sh0) or na(sh1) or na(sl0) or na(sl1) or na(sh0Close) or na(sl0Close)
-        CONTINUATION
+        [CONTINUATION, false]
     else
-        // CHoCH BULLISH: previous trend was NOT bullish + higher high with close confirmation
-        // When only 3 swings available, fall back to direct structure check (sh1 < sh2)
+        // CHoCH BULLISH conditions
         bool hh1AboveHH2 = sh0 > sh1
         bool hh1CandleClosedAboveHH2 = sh0Close > sh1
-        bool prevNotBullish = hasPrevTrend ? (prevDir != BULLISH) : (not na(sh2) and sh1 < sh2)
+        bool prevHighsDeclining = not na(sh2) and sh1 < sh2
+        bool prevNotBullish = hasPrevTrend ? (prevDir != BULLISH) : prevHighsDeclining
+        bool bullishByStructure = prevHighsDeclining and hh1AboveHH2 and hh1CandleClosedAboveHH2
+        bool bullishByPrev = prevNotBullish and hh1AboveHH2 and hh1CandleClosedAboveHH2
 
-        if prevNotBullish and hh1AboveHH2 and hh1CandleClosedAboveHH2
-            CHOCH_BULLISH
-        else
-            // CHoCH BEARISH: previous trend was NOT bearish + lower low with close confirmation
-            bool ll1BelowLL2 = sl0 < sl1
-            bool ll1CandleClosedBelowLL2 = sl0Close < sl1
-            bool prevNotBearish = hasPrevTrend ? (prevDir != BEARISH) : (not na(sl2) and sl1 > sl2)
+        // CHoCH BEARISH conditions
+        bool ll1BelowLL2 = sl0 < sl1
+        bool ll1CandleClosedBelowLL2 = sl0Close < sl1
+        bool prevLowsRising = not na(sl2) and sl1 > sl2
+        bool prevNotBearish = hasPrevTrend ? (prevDir != BEARISH) : prevLowsRising
+        bool bearishByStructure = prevLowsRising and ll1BelowLL2 and ll1CandleClosedBelowLL2
+        bool bearishByPrev = prevNotBearish and ll1BelowLL2 and ll1CandleClosedBelowLL2
 
-            if prevNotBearish and ll1BelowLL2 and ll1CandleClosedBelowLL2
-                CHOCH_BEARISH
+        // DUAL CHoCH: both structural conditions true → most recent wins
+        if bullishByStructure and bearishByStructure
+            if lastSwingWasHigh
+                // SH0 more recent → CHoCH Bullish wins
+                [CHOCH_BULLISH, hasPrevTrend and prevDir == BULLISH]
             else
-                CONTINUATION
+                // SL0 more recent → CHoCH Bearish wins
+                [CHOCH_BEARISH, hasPrevTrend and prevDir == BEARISH]
+        else
+            // SINGLE CHoCH (using prevDir)
+            if bullishByPrev
+                [CHOCH_BULLISH, false]
+            else if bearishByPrev
+                [CHOCH_BEARISH, false]
+            else
+                [CONTINUATION, false]
 
 // ----- Gate Trend Change (require CHoCH confirmation for reversals) -----
 // When the raw trend reverses vs the previous trend, require CHoCH confirmation.
 // Without CHoCH, check if structure still supports the previous trend (compression).
-gateTrendChange(int rawDir, int rawStatus, int prevDir, int choch, float sh0, float sh3, float sl0, float sl3) =>
-    if prevDir == BULLISH and rawDir == BEARISH
+// Dual CHoCH liquidity sweep: if both CHoCH detected and most recent matches prevDir,
+// the opposing CHoCH was a liquidity sweep → restore previous trend as Momentum.
+gateTrendChange(int rawDir, int rawStatus, int prevDir, int choch, bool chochLiqSweep, float sh0, float sh3, float sl0, float sl3) =>
+    if chochLiqSweep
+        // Dual CHoCH liquidity sweep: restore previous trend as Momentum
+        [prevDir, MOMENTUM, true]
+    else if prevDir == BULLISH and rawDir == BEARISH
         if choch == CHOCH_BEARISH
-            [BEARISH, rawStatus]
+            [BEARISH, rawStatus, false]
         else
             if not na(sh0) and not na(sh3) and sh0 > sh3
-                [BULLISH, COMPRESSION]
+                [BULLISH, COMPRESSION, false]
             else
-                [NODIRECTION, 0]
+                [NODIRECTION, 0, false]
     else if prevDir == BEARISH and rawDir == BULLISH
         if choch == CHOCH_BULLISH
-            [BULLISH, rawStatus]
+            [BULLISH, rawStatus, false]
         else
             if not na(sl0) and not na(sl3) and sl0 < sl3
-                [BEARISH, COMPRESSION]
+                [BEARISH, COMPRESSION, false]
             else
-                [NODIRECTION, 0]
+                [NODIRECTION, 0, false]
     else
-        [rawDir, rawStatus]
+        [rawDir, rawStatus, false]
 
 // ----- Get current trend, liquidity sweep, and CHoCH (only if valid timeframe) -----
 var int swingsDirection = NODIRECTION
@@ -448,18 +469,22 @@ var int chochStatus = CONTINUATION
 [prevTrendDir, prevTrendStatus] = calcSwingsTrend(ph_1, ph_2, ph_3, pl_1, pl_2, pl_3)
 bool hasPrevTrend = not na(ph_3) and not na(pl_3)
 
+bool gatedLiqSweep = false
+
 if validTimeframe
     [rawDir, rawStatus] = calcSwingsTrend(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2)
-    chochStatus := calcCHoCH(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0, prevTrendDir, hasPrevTrend)
-    [dir, status] = gateTrendChange(rawDir, rawStatus, prevTrendDir, chochStatus, ph_0, ph_3, pl_0, pl_3)
+    [choch, chochLiqSweep] = calcCHoCH(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0, prevTrendDir, hasPrevTrend, lastWasHigh)
+    chochStatus := choch
+    [dir, status, gLiqSweep] = gateTrendChange(rawDir, rawStatus, prevTrendDir, chochStatus, chochLiqSweep, ph_0, ph_3, pl_0, pl_3)
     swingsDirection := dir
     trendStatus := status
+    gatedLiqSweep := gLiqSweep
 else
     swingsDirection := NODIRECTION
     trendStatus := 0
     chochStatus := CONTINUATION
 
-bool liquiditySweep = validTimeframe ? calcLiquiditySweep(swingsDirection, ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0) : false
+bool liquiditySweep = validTimeframe ? (gatedLiqSweep or calcLiquiditySweep(swingsDirection, ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0)) : false
 
 // ----- Draw Swing Icons (only if valid timeframe) -----
 if drawSwingIcons and validTimeframe

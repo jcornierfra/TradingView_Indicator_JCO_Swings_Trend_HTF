@@ -2,12 +2,13 @@
 
 Pine Script indicator for TradingView that detects swing highs and lows on a higher timeframe (HTF) and determines the trend direction based on swing structure.
 
-![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.2)
+![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.3)
 
 ## Features
 
 - **Trend Detection**: Identifies Bullish/Bearish trends with Momentum or Compression status
 - **Trend Reversal Gating**: Requires CHoCH confirmation before accepting a trend reversal
+- **Dual CHoCH Detection**: Simultaneous bullish and bearish CHoCH evaluation with liquidity sweep identification
 - **CHoCH Detection**: Change of Character detection with previous trend analysis and 5-candle close confirmation
 - **Liquidity Sweep Detection**: Identifies liquidity grabs with close price confirmation
 - **Swing Alternation**: Enforces High-Low-High-Low sequence with automatic missing swing insertion
@@ -62,8 +63,9 @@ When the primary structure shows a V-shape correction (e.g. SL2 > SL1 < SL0), th
 
 When the raw trend calculation reverses compared to the previous trend (computed on swings 1, 2, 3), the reversal is **not accepted immediately**. Instead:
 
-1. **With CHoCH confirmation** → the reversal is accepted with its raw status (Momentum/Compression)
-2. **Without CHoCH** → the indicator checks if the previous trend structure is still valid:
+1. **With CHoCH liquidity sweep** → the previous trend is restored as **Momentum** and a liquidity sweep is flagged
+2. **With CHoCH confirmation** → the reversal is accepted with its raw status (Momentum/Compression)
+3. **Without CHoCH** → the indicator checks if the previous trend structure is still valid:
    - **Bullish to Bearish** (no CHoCH): if SH0 > SH3 → stays **Bullish (C)** (compression), otherwise → **Unclear**
    - **Bearish to Bullish** (no CHoCH): if SL0 < SL3 → stays **Bearish (C)** (compression), otherwise → **Unclear**
 
@@ -75,6 +77,27 @@ Detects potential trend reversals by evaluating the **previous trend** (using sw
 
 - **Bullish CHoCH**: Previous trend was not bullish + higher high (SH0 > SH1) + close above SH1
 - **Bearish CHoCH**: Previous trend was not bearish + lower low (SL0 < SL1) + close below SL1
+
+### Dual CHoCH Detection
+
+Both bullish and bearish CHoCH conditions are evaluated simultaneously using **structure-based** checks:
+
+- **Bullish by structure**: SH1 < SH2 (declining highs) + SH0 > SH1 + close above SH1
+- **Bearish by structure**: SL1 > SL2 (rising lows) + SL0 < SL1 + close below SL1
+
+When **both** conditions are true at the same time (dual CHoCH), the most recent swing determines which CHoCH wins:
+
+- If the **last swing was a high** → Bullish CHoCH wins
+- If the **last swing was a low** → Bearish CHoCH wins
+
+### CHoCH as Liquidity Sweep
+
+When a dual CHoCH occurs and the winning CHoCH matches the **previous trend direction**, the opposing CHoCH is identified as a **liquidity sweep** rather than a true reversal. In this case:
+
+- The previous trend is **restored as Momentum** (the structure is re-confirmed)
+- The liquidity sweep flag is set (displayed in the dashboard)
+
+This handles scenarios where price briefly breaks structure in both directions but ultimately continues the existing trend.
 
 ### Close Confirmation Window
 
@@ -103,6 +126,7 @@ The indicator enforces a strict High-Low-High-Low alternation. When consecutive 
 - **v1.0** (2026-02-05): Initial release
 - **v1.1** (2026-02-06): CHoCH detection with previous trend analysis and 5-candle close confirmation window
 - **v1.2** (2026-02-09): Trend reversal gating (require CHoCH confirmation), "Unclear" displayed in gray
+- **v1.3** (2026-02-10): Dual CHoCH detection (simultaneous bullish/bearish evaluation), CHoCH liquidity sweep identification
 
 ## Installation
 
