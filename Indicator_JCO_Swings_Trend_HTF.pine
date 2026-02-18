@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.4
+// Version: 1.5
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_HTF
 //
 // Description: Detects swing highs and lows on a higher timeframe (HTF) and determines
@@ -20,6 +20,11 @@
 //   v1.3 - 2026-02-10: Dual CHoCH detection with liquidity sweep restoration
 //                       (aligned with cTrader v1.7)
 //   v1.4 - 2026-02-10: Configurable pip value parameter (replaces hardcoded mintick * 100)
+//   v1.5 - 2026-02-18: Close-based trend calculation: calcSwingsTrend uses pivot close prices
+//                       instead of high/low to filter liquidity wicks (CHoCH, liquidity sweep,
+//                       expansion remain on high/low)
+//                       Pivot close simplified: uses close of the pivot candle itself instead
+//                       of best close in 5-candle window (fixes false CHoCH signals)
 
 //@version=6
 indicator("JCO Swings Trend HTF", overlay=true, max_labels_count=500)
@@ -64,29 +69,16 @@ getPivotsHTF() =>
     bool isPivotLow = not na(pivotLowPrice)
 
     float ph0 = ta.valuewhen(isPivotHigh, pivotHighPrice, 0)
-    float ph1 = ta.valuewhen(isPivotHigh, pivotHighPrice, 1)
-    float ph2 = ta.valuewhen(isPivotHigh, pivotHighPrice, 2)
     float pl0 = ta.valuewhen(isPivotLow, pivotLowPrice, 0)
-    float pl1 = ta.valuewhen(isPivotLow, pivotLowPrice, 1)
-    float pl2 = ta.valuewhen(isPivotLow, pivotLowPrice, 2)
 
-    int phTime0 = ta.valuewhen(isPivotHigh, time[rightBars], 0)
-    int plTime0 = ta.valuewhen(isPivotLow, time[rightBars], 0)
+    // Close price of the pivot candle itself (for CHoCH detection)
+    float phClose0 = ta.valuewhen(isPivotHigh, close[rightBars], 0)
+    float plClose0 = ta.valuewhen(isPivotLow, close[rightBars], 0)
 
-    // Close prices: best close in 5-candle window around pivot (for CHoCH detection)
-    // Window: 2 candles before, pivot candle, 2 candles after (in swing TF)
-    // For swing highs: max close (best chance of closing above previous high for CHoCH bullish)
-    // For swing lows: min close (best chance of closing below previous low for CHoCH bearish)
-    float _rb2Close = rightBars >= 2 ? close[rightBars - 2] : close[rightBars]
-    float _windowMaxClose = math.max(math.max(close[rightBars + 2], close[rightBars + 1]), math.max(math.max(close[rightBars], close[rightBars - 1]), _rb2Close))
-    float _windowMinClose = math.min(math.min(close[rightBars + 2], close[rightBars + 1]), math.min(math.min(close[rightBars], close[rightBars - 1]), _rb2Close))
-    float phClose0 = ta.valuewhen(isPivotHigh, _windowMaxClose, 0)
-    float plClose0 = ta.valuewhen(isPivotLow, _windowMinClose, 0)
-
-    [ph0, ph1, ph2, pl0, pl1, pl2, isPivotHigh, isPivotLow, phTime0, plTime0, phClose0, plClose0]
+    [ph0, pl0, phClose0, plClose0]
 
 // ----- Request data from HTF -----
-[rawPH0, rawPH1, rawPH2, rawPL0, rawPL1, rawPL2, htfPivotHighFound, htfPivotLowFound, rawPHTime, rawPLTime, rawPHClose, rawPLClose] = request.security(syminfo.tickerid, swingTimeFrame, getPivotsHTF())
+[rawPH0, rawPL0, rawPHClose, rawPLClose] = request.security(syminfo.tickerid, swingTimeFrame, getPivotsHTF())
 
 // ----- Helper functions for swing bar detection -----
 int htfBarsLookback = math.max(50, int(swingTFSeconds / chartTFSeconds) * (rightBars + 3))
@@ -152,9 +144,9 @@ var float ph_0 = na, var float ph_1 = na, var float ph_2 = na, var float ph_3 = 
 var float pl_0 = na, var float pl_1 = na, var float pl_2 = na, var float pl_3 = na, var float pl_4 = na
 var float lastRawPH = na, var float lastRawPL = na
 
-// Storage for close prices of swing candles (for CHoCH detection)
-var float phClose_0 = na
-var float plClose_0 = na
+// Storage for close prices of swing candles (for CHoCH and close-based trend detection)
+var float phClose_0 = na, var float phClose_1 = na, var float phClose_2 = na, var float phClose_3 = na
+var float plClose_0 = na, var float plClose_1 = na, var float plClose_2 = na, var float plClose_3 = na
 var float lastRawPHClose = na, var float lastRawPLClose = na
 
 // Storage for swing labels (to allow moving them when swing is updated)
@@ -186,6 +178,9 @@ if validTimeframe
             ph_2 := ph_1
             ph_1 := ph_0
             ph_0 := rawPH0
+            phClose_3 := phClose_2
+            phClose_2 := phClose_1
+            phClose_1 := phClose_0
             phClose_0 := rawPHClose
             lastWasHigh := true
             newSwingHigh := true
@@ -200,6 +195,9 @@ if validTimeframe
             pl_2 := pl_1
             pl_1 := pl_0
             pl_0 := rawPL0
+            plClose_3 := plClose_2
+            plClose_2 := plClose_1
+            plClose_1 := plClose_0
             plClose_0 := rawPLClose
             lastWasHigh := false
             newSwingLow := true
@@ -215,6 +213,9 @@ if validTimeframe
             ph_2 := ph_1
             ph_1 := ph_0
             ph_0 := rawPH0
+            phClose_3 := phClose_2
+            phClose_2 := phClose_1
+            phClose_1 := phClose_0
             phClose_0 := rawPHClose
             lastWasHigh := true
             newSwingHigh := true
@@ -228,13 +229,16 @@ if validTimeframe
             if not na(newHighBar) and not na(lastAcceptedHighBar)
                 [mPrice, mBar, mClose] = findLowestLowBetween(lastAcceptedHighBar, newHighBar)
                 if not na(mPrice)
-                    // Insert missing low (use swing price as close - no candle confirmation needed)
+                    // Insert missing low
                     pl_4 := pl_3
                     pl_3 := pl_2
                     pl_2 := pl_1
                     pl_1 := pl_0
                     pl_0 := mPrice
-                    plClose_0 := mPrice
+                    plClose_3 := plClose_2
+                    plClose_2 := plClose_1
+                    plClose_1 := plClose_0
+                    plClose_0 := mClose
                     newSwingLow := true
                     lastAcceptedLowBar := mBar
                     // Accept new high
@@ -243,6 +247,9 @@ if validTimeframe
                     ph_2 := ph_1
                     ph_1 := ph_0
                     ph_0 := rawPH0
+                    phClose_3 := phClose_2
+                    phClose_2 := phClose_1
+                    phClose_1 := phClose_0
                     phClose_0 := rawPHClose
                     newSwingHigh := true
                     lastAcceptedHighBar := newHighBar
@@ -264,6 +271,9 @@ if validTimeframe
             pl_2 := pl_1
             pl_1 := pl_0
             pl_0 := rawPL0
+            plClose_3 := plClose_2
+            plClose_2 := plClose_1
+            plClose_1 := plClose_0
             plClose_0 := rawPLClose
             lastWasHigh := false
             newSwingLow := true
@@ -283,7 +293,10 @@ if validTimeframe
                     ph_2 := ph_1
                     ph_1 := ph_0
                     ph_0 := mPrice
-                    phClose_0 := mPrice
+                    phClose_3 := phClose_2
+                    phClose_2 := phClose_1
+                    phClose_1 := phClose_0
+                    phClose_0 := mClose
                     newSwingHigh := true
                     lastAcceptedHighBar := mBar
                     // Accept new low
@@ -292,6 +305,9 @@ if validTimeframe
                     pl_2 := pl_1
                     pl_1 := pl_0
                     pl_0 := rawPL0
+                    plClose_3 := plClose_2
+                    plClose_2 := plClose_1
+                    plClose_1 := plClose_0
                     plClose_0 := rawPLClose
                     newSwingLow := true
                     lastAcceptedLowBar := newLowBar
@@ -307,6 +323,8 @@ if validTimeframe
             lastRawPLClose := rawPLClose
 
 // ----- Calculate Trend (with Primary/Secondary confirmation) -----
+// Uses pivot CLOSE prices to filter out liquidity wicks in the structure analysis.
+// CHoCH, liquidity sweep and expansion continue to use high/low prices.
 calcSwingsTrend(sh0, sh1, sh2, sl0, sl1, sl2) =>
     // Check if we have enough data
     if na(sh0) or na(sh1) or na(sh2) or na(sl0) or na(sl1) or na(sl2)
@@ -467,14 +485,14 @@ gateTrendChange(int rawDir, int rawStatus, int prevDir, int choch, bool chochLiq
 var int swingsDirection = NODIRECTION
 var int trendStatus = 0
 var int chochStatus = CONTINUATION
-// Calculate previous trend for CHoCH (at top level to avoid Pine Script nested function call issues)
-[prevTrendDir, prevTrendStatus] = calcSwingsTrend(ph_1, ph_2, ph_3, pl_1, pl_2, pl_3)
+// Calculate previous trend using close prices (swings 1,2,3) - avoids nested function call issues
+[prevTrendDir, prevTrendStatus] = calcSwingsTrend(phClose_1, phClose_2, phClose_3, plClose_1, plClose_2, plClose_3)
 bool hasPrevTrend = not na(ph_3) and not na(pl_3)
 
 bool gatedLiqSweep = false
 
 if validTimeframe
-    [rawDir, rawStatus] = calcSwingsTrend(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2)
+    [rawDir, rawStatus] = calcSwingsTrend(phClose_0, phClose_1, phClose_2, plClose_0, plClose_1, plClose_2)
     [choch, chochLiqSweep] = calcCHoCH(ph_0, ph_1, ph_2, pl_0, pl_1, pl_2, phClose_0, plClose_0, prevTrendDir, hasPrevTrend, lastWasHigh)
     chochStatus := choch
     [dir, status, gLiqSweep] = gateTrendChange(rawDir, rawStatus, prevTrendDir, chochStatus, chochLiqSweep, ph_0, ph_3, pl_0, pl_3)

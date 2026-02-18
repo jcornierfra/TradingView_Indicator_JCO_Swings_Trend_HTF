@@ -129,6 +129,7 @@ The indicator enforces a strict High-Low-High-Low alternation. When consecutive 
 - **v1.2** (2026-02-09): Trend reversal gating (require CHoCH confirmation), "Unclear" displayed in gray
 - **v1.3** (2026-02-10): Dual CHoCH detection (simultaneous bullish/bearish evaluation), CHoCH liquidity sweep identification
 - **v1.4** (2026-02-10): Configurable pip value parameter (replaces hardcoded mintick * 100)
+- **v1.5** (2026-02-18): Close-based trend calculation (filters liquidity wicks), pivot close simplified to pivot candle close
 
 ## Installation
 
