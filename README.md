@@ -2,14 +2,15 @@
 
 Pine Script indicator for TradingView that detects swing highs and lows on a higher timeframe (HTF) and determines the trend direction based on swing structure.
 
-![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.4)
+![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.5)
 
 ## Features
 
 - **Trend Detection**: Identifies Bullish/Bearish trends with Momentum or Compression status
 - **Trend Reversal Gating**: Requires CHoCH confirmation before accepting a trend reversal
 - **Dual CHoCH Detection**: Simultaneous bullish and bearish CHoCH evaluation with liquidity sweep identification
-- **CHoCH Detection**: Change of Character detection with previous trend analysis and 5-candle close confirmation
+- **Close-based Trend Calculation**: Trend structure uses pivot close prices to filter liquidity wicks
+- **CHoCH Detection**: Change of Character detection with previous trend analysis and pivot candle close confirmation
 - **Liquidity Sweep Detection**: Identifies liquidity grabs with close price confirmation
 - **Swing Alternation**: Enforces High-Low-High-Low sequence with automatic missing swing insertion
 - **Multi-Timeframe**: Works on any timeframe while analyzing swings from a higher timeframe
@@ -44,7 +45,7 @@ The indicator displays a compact dashboard with:
 
 ## Trend Logic
 
-Uses the 3 most recent swing highs (SH0, SH1, SH2) and swing lows (SL0, SL1, SL2) to determine the trend.
+Uses the 3 most recent swing highs (SH0, SH1, SH2) and swing lows (SL0, SL1, SL2) to determine the trend. Structure analysis uses the **close price of each pivot candle** (not the high/low wick) to filter out liquidity wicks that would otherwise cause false trend flips. CHoCH, liquidity sweep, and expansion continue to use actual high/low prices.
 
 ### Primary Analysis
 
@@ -100,9 +101,9 @@ When a dual CHoCH occurs and the winning CHoCH matches the **previous trend dire
 
 This handles scenarios where price briefly breaks structure in both directions but ultimately continues the existing trend.
 
-### Close Confirmation Window
+### Close Confirmation
 
-Close confirmation uses a **5-candle window** (2 before, pivot candle, 2 after) in the swing timeframe. The max close (for bullish) or min close (for bearish) across the window is compared against the previous swing level. This handles **immediate rebalance** scenarios where the pivot candle itself has a long wick and closes back below/above the level.
+Close confirmation uses the **close of the pivot candle itself** in the swing timeframe, compared against the previous swing level. This avoids false CHoCH signals that could be triggered by the close of a neighboring candle.
 
 ## Liquidity Sweep
 
