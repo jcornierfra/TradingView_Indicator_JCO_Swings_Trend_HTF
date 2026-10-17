@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.5
+// Version: 1.6
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_HTF
 //
 // Description: Detects swing highs and lows on a higher timeframe (HTF) and determines
@@ -10,6 +10,7 @@
 //              - CHoCH (Change of Character) detection for potential reversals
 //              - Liquidity sweep detection with close price confirmation
 //              - Swing alternation with automatic missing swing insertion
+//              - Optional CHoCH line drawing on the broken swing level
 //
 // Changelog:
 //   v1.0 - 2026-02-05: Initial release
@@ -25,15 +26,18 @@
 //                       expansion remain on high/low)
 //                       Pivot close simplified: uses close of the pivot candle itself instead
 //                       of best close in 5-candle window (fixes false CHoCH signals)
+//   v1.6 - 2026-03-28: Optional CHoCH line drawn from SH1/SL1 to the breaking swing
+//                       ("Draw CHoCH Line" input, lime = bullish, red = bearish)
 
 //@version=6
-indicator("JCO Swings Trend HTF", overlay=true, max_labels_count=500)
+indicator("JCO Swings Trend HTF", overlay=true, max_labels_count=500, max_lines_count=500)
 
 // ----- Inputs -----
 swingPeriod = input.int(5, "Swing Period", minval=3, group="Swings H & L")
 swingTimeFrame = input.timeframe("60", "Swing Time Frame", group="Swings H & L")
 
 drawSwingIcons = input.bool(true, "Draw Icons", group="Swings Chart")
+drawChochLine = input.bool(true, "Draw CHoCH Line", group="Swings Chart")
 swingIconGapPercent = input.float(0.1, "Icon Gap (% of price)", minval=0.01, maxval=1.0, step=0.01, group="Swings Chart")
 displayDashboard = input.bool(true, "Display Dashboard", group="Swings Chart")
 displaySwingValues = input.bool(false, "Show SH/SL Values", group="Swings Chart")
@@ -485,6 +489,7 @@ gateTrendChange(int rawDir, int rawStatus, int prevDir, int choch, bool chochLiq
 var int swingsDirection = NODIRECTION
 var int trendStatus = 0
 var int chochStatus = CONTINUATION
+var int chochPrevStatus = CONTINUATION
 // Calculate previous trend using close prices (swings 1,2,3) - avoids nested function call issues
 [prevTrendDir, prevTrendStatus] = calcSwingsTrend(phClose_1, phClose_2, phClose_3, plClose_1, plClose_2, plClose_3)
 bool hasPrevTrend = not na(ph_3) and not na(pl_3)
@@ -547,6 +552,20 @@ if drawSwingIcons and validTimeframe
             lastSwingLowLabel := label.new(swingLowBar, pl_0 - gapLow, "▲",
                  xloc=xloc.bar_index, style=label.style_label_up, textcolor=color.green,
                  color=color.new(color.white, 100), size=size.small)
+
+// ----- Draw CHoCH Lines -----
+if drawChochLine and validTimeframe and chochStatus != chochPrevStatus
+    if chochStatus == CHOCH_BULLISH and not na(ph_0) and not na(ph_1)
+        int barPh1 = findSwingHighBar(ph_1, htfBarsLookback)
+        int barPh0 = findSwingHighBar(ph_0, htfBarsLookback)
+        if not na(barPh1) and not na(barPh0)
+            line.new(barPh1, ph_1, barPh0, ph_1, xloc=xloc.bar_index, color=color.lime, width=1, style=line.style_solid)
+    else if chochStatus == CHOCH_BEARISH and not na(pl_0) and not na(pl_1)
+        int barPl1 = findSwingLowBar(pl_1, htfBarsLookback)
+        int barPl0 = findSwingLowBar(pl_0, htfBarsLookback)
+        if not na(barPl1) and not na(barPl0)
+            line.new(barPl1, pl_1, barPl0, pl_1, xloc=xloc.bar_index, color=color.red, width=1, style=line.style_solid)
+chochPrevStatus := chochStatus
 
 // ----- Dashboard -----
 if displayDashboard and barstate.islast

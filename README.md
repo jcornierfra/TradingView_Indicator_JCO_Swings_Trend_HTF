@@ -2,7 +2,7 @@
 
 Pine Script indicator for TradingView that detects swing highs and lows on a higher timeframe (HTF) and determines the trend direction based on swing structure.
 
-![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.5)
+![JCO Swings Trend HTF Screenshot](screenshot.png?v=1.6)
 
 ## Features
 
@@ -14,6 +14,7 @@ Pine Script indicator for TradingView that detects swing highs and lows on a hig
 - **Liquidity Sweep Detection**: Identifies liquidity grabs with close price confirmation
 - **Swing Alternation**: Enforces High-Low-High-Low sequence with automatic missing swing insertion
 - **Multi-Timeframe**: Works on any timeframe while analyzing swings from a higher timeframe
+- **CHoCH Lines**: Optional horizontal line marking the broken swing level when a CHoCH occurs
 
 ## Dashboard
 
@@ -37,6 +38,7 @@ The indicator displays a compact dashboard with:
 ### Swings Chart
 
 - **Draw Icons**: Show swing high/low markers on chart
+- **Draw CHoCH Line**: Draw a line on the broken swing level (SH1 for bullish, SL1 for bearish) when a CHoCH is confirmed
 - **Icon Gap (% of price)**: Distance of icons from price level
 - **Display Dashboard**: Show/hide the dashboard table
 - **Show SH/SL Values**: Display swing high/low price values in dashboard
@@ -101,6 +103,10 @@ When a dual CHoCH occurs and the winning CHoCH matches the **previous trend dire
 
 This handles scenarios where price briefly breaks structure in both directions but ultimately continues the existing trend.
 
+### CHoCH Line
+
+When **Draw CHoCH Line** is enabled, a horizontal line is drawn each time the CHoCH status changes, from the broken swing (SH1 or SL1) to the swing that broke it (SH0 or SL0). Lime for a bullish CHoCH, red for a bearish CHoCH.
+
 ### Close Confirmation
 
 Close confirmation uses the **close of the pivot candle itself** in the swing timeframe, compared against the previous swing level. This avoids false CHoCH signals that could be triggered by the close of a neighboring candle.
@@ -131,6 +137,7 @@ The indicator enforces a strict High-Low-High-Low alternation. When consecutive 
 - **v1.3** (2026-02-10): Dual CHoCH detection (simultaneous bullish/bearish evaluation), CHoCH liquidity sweep identification
 - **v1.4** (2026-02-10): Configurable pip value parameter (replaces hardcoded mintick * 100)
 - **v1.5** (2026-02-18): Close-based trend calculation (filters liquidity wicks), pivot close simplified to pivot candle close
+- **v1.6** (2026-03-28): Optional CHoCH line drawing (lime = bullish, red = bearish), `max_lines_count=500`
 
 ## Installation
 

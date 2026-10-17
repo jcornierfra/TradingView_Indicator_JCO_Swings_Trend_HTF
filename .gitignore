@@ -1,0 +1,8 @@
+# Editeurs
+.vscode/
+.idea/
+
+# Artefacts Windows / OneDrive
+Thumbs.db
+desktop.ini
+~$*
